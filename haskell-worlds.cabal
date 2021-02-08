@@ -20,16 +20,22 @@ library
   exposed-modules:     HWorlds, HWorlds.Core, HWorlds.Query, HWorlds.Store.HashMap, HWorlds.Store.Map
   -- other-modules:
   -- other-extensions:
-  build-depends:       base ^>=4.14.1.0, bitvec, vector, containers, transformers,  compact, hashtables
+  build-depends:       
+    base ^>=4.14.1.0, 
+    bitvec, 
+    vector, 
+    containers, 
+    transformers,  
+    hashtables
   hs-source-dirs:      src
   default-language:    Haskell2010
-
+  
 executable bench
   exposed-modules:     Main.hs
   main-is: Main.hs
   -- other-modules:
   -- other-extensions:
-  build-depends:       base ^>=4.14.1.0, apecs, criterion, haskell-worlds
+  build-depends:       base ^>=4.14.1.0, apecs, gauge, haskell-worlds
   hs-source-dirs:      bench
   default-language:    Haskell2010
 

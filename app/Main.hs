@@ -1,4 +1,10 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+
+
 module Main where
 
 import HWorlds
@@ -15,11 +21,13 @@ main = do
   entityWorld <- entityWorld
   let myWorld = mergeWorld positionWorld $ mergeWorld velocityWorld entityWorld
   runWorldT myWorld $ do
-    initEntity (Position 0 0)
-    initEntity (Position 10 10, Velocity 0 5)
+    replicateM_ 20 $ do
+      e <- initEntity (Position 0 0)
+      e <- initEntity (Position 10 10, Velocity 0 5)
+      initEntity (Position 5 5)
 
-    replicateM_ 10 $ do
+    replicateM_ 50 $ do
 
       cmap $ \(Velocity dx dy) -> Velocity dx (pred dy)
       cmap $ \(Position x y, Velocity dx dy) -> Position (dx + x) (dy + y)
-      cmapM_ $ \(Position x y) -> liftIO $ print (x,y)
+      cmapM_ $ \(Position x y, Velocity _ _) -> liftIO $ print (x,y)

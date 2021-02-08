@@ -29,13 +29,9 @@ executeQuery :: forall i as m s. (MultiMember as i, MultiGet as i, Monoid s, Mon
   (i -> QueryBody as m s) -> WorldT as m s
 executeQuery makeQuery = do
   entities <- multiMember (Proxy @i)
-  eFoldMap entities $ \e -> do
-    i <- multiGet e
-    case i of
-      Nothing -> error "Members accessed that do not have this entity"
-      Just i -> do
-        let (QueryBody readerT) = makeQuery i
-        runReaderT readerT e
+  eFold entities $ \(e,i) -> do
+    let (QueryBody readerT) = makeQuery i
+    runReaderT readerT e
 
 newtype QueryBody as m a = QueryBody (ReaderT Entity (WorldT as m) a) deriving (Functor, Applicative, Monad, MonadIO)
 
@@ -74,40 +70,40 @@ cfoldr f b = fmap (($b) . appEndo) $ cfold $ Endo #. f
 cfoldl :: (MultiGet as a, MultiMember as a, MonadIO m) => (b -> a -> b) -> b -> WorldT as m b
 cfoldl f b = fmap (($b) . appEndo . getDual) $ cfold $ Dual . Endo . flip f
 
-class QueryHead' (b :: Bool) (as :: AppendList Op) is where
-  getQueryHead :: MonadIO m => Proxy b -> Entity -> WorldT as m is
-  getQueryEntities :: MonadIO m => Proxy b -> Proxy is -> WorldT as m Entities
+-- class QueryHead' (b :: Bool) (as :: AppendList Op) is where
+--   getQueryHead :: MonadIO m => Proxy b -> Entity -> WorldT as m is
+--   getQueryEntities :: MonadIO m => Proxy b -> Proxy is -> WorldT as m Entities
 
-instance (HasCapability as (Get a), HasCapability as (Member a)) => QueryHead' True as a where
-  getQueryHead _ e = fromJust <$> eGet e
-  getQueryEntities _ _ = eMember (Proxy @a)
-  {-# INLINE getQueryHead #-}
-  {-# INLINE getQueryEntities #-}
+-- instance (HasCapability as (Get a), HasCapability as (Member a)) => QueryHead' True as a where
+--   getQueryHead _ e = fromJust <$> eGet e
+--   getQueryEntities _ _ = eMember (Proxy @a)
+--   {-# INLINE getQueryHead #-}
+--   {-# INLINE getQueryEntities #-}
 
-type QueryHeadContains as i = (And (Contains as (Get i)) (Contains as (Member i)))
+-- type QueryHeadContains as i = (And (Contains as (Get i)) (Contains as (Member i)))
 
-type QueryHead as a = QueryHead' (QueryHeadContains as a) as a
+-- type QueryHead as a = QueryHead' (QueryHeadContains as a) as a
 
-instance (QueryHead as a, QueryHead as b) => QueryHead' False as (a,b) where
-  getQueryHead _ e = (,) <$> getQueryHead (Proxy @(QueryHeadContains as a)) e <*> getQueryHead (Proxy @(QueryHeadContains as b)) e
-  getQueryEntities _ _ = intersectEntities <$> getQueryEntities (Proxy @(QueryHeadContains as a)) (Proxy @a) <*> getQueryEntities (Proxy @(QueryHeadContains as b)) (Proxy @b)
-  {-# INLINE getQueryHead #-}
-  {-# INLINE getQueryEntities #-}
+-- instance (QueryHead as a, QueryHead as b) => QueryHead' False as (a,b) where
+--   getQueryHead _ e = (,) <$> getQueryHead (Proxy @(QueryHeadContains as a)) e <*> getQueryHead (Proxy @(QueryHeadContains as b)) e
+--   getQueryEntities _ _ = intersectEntities <$> getQueryEntities (Proxy @(QueryHeadContains as a)) (Proxy @a) <*> getQueryEntities (Proxy @(QueryHeadContains as b)) (Proxy @b)
+--   {-# INLINE getQueryHead #-}
+--   {-# INLINE getQueryEntities #-}
 
-instance (QueryHead as a, QueryHead as b, QueryHead as c) => QueryHead' False as (a,b,c) where
-  getQueryHead _ e = (,,) <$> getQueryHead (Proxy @(QueryHeadContains as a)) e <*> getQueryHead (Proxy @(QueryHeadContains as b)) e <*> getQueryHead (Proxy @(QueryHeadContains as c)) e
-  getQueryEntities _ _ = liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as a)) (Proxy @a)) $
-    liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as b)) (Proxy @b)) (getQueryEntities (Proxy @(QueryHeadContains as c)) (Proxy @c))
-  {-# INLINE getQueryHead #-}
-  {-# INLINE getQueryEntities #-}
+-- instance (QueryHead as a, QueryHead as b, QueryHead as c) => QueryHead' False as (a,b,c) where
+--   getQueryHead _ e = (,,) <$> getQueryHead (Proxy @(QueryHeadContains as a)) e <*> getQueryHead (Proxy @(QueryHeadContains as b)) e <*> getQueryHead (Proxy @(QueryHeadContains as c)) e
+--   getQueryEntities _ _ = liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as a)) (Proxy @a)) $
+--     liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as b)) (Proxy @b)) (getQueryEntities (Proxy @(QueryHeadContains as c)) (Proxy @c))
+--   {-# INLINE getQueryHead #-}
+--   {-# INLINE getQueryEntities #-}
 
-instance (QueryHead' (QueryHeadContains as a) as a, QueryHead' (QueryHeadContains as b) as b, QueryHead' (QueryHeadContains as c) as c, QueryHead' (QueryHeadContains as d) as d) => QueryHead' False as (a,b,c,d) where
-  getQueryHead _ e = (,,,) <$> getQueryHead (Proxy @(QueryHeadContains as a)) e <*> getQueryHead (Proxy @(QueryHeadContains as b)) e <*> getQueryHead (Proxy @(QueryHeadContains as c)) e <*> getQueryHead (Proxy @(QueryHeadContains as d)) e
-  getQueryEntities _ _ = liftA2 intersectEntities
-    (liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as a)) (Proxy @a)) (getQueryEntities (Proxy @(QueryHeadContains as b)) (Proxy @b)))
-    (liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as c)) (Proxy @c)) (getQueryEntities (Proxy @(QueryHeadContains as d)) (Proxy @d)))
-  {-# INLINE getQueryHead #-}
-  {-# INLINE getQueryEntities #-}
+-- instance (QueryHead' (QueryHeadContains as a) as a, QueryHead' (QueryHeadContains as b) as b, QueryHead' (QueryHeadContains as c) as c, QueryHead' (QueryHeadContains as d) as d) => QueryHead' False as (a,b,c,d) where
+--   getQueryHead _ e = (,,,) <$> getQueryHead (Proxy @(QueryHeadContains as a)) e <*> getQueryHead (Proxy @(QueryHeadContains as b)) e <*> getQueryHead (Proxy @(QueryHeadContains as c)) e <*> getQueryHead (Proxy @(QueryHeadContains as d)) e
+--   getQueryEntities _ _ = liftA2 intersectEntities
+--     (liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as a)) (Proxy @a)) (getQueryEntities (Proxy @(QueryHeadContains as b)) (Proxy @b)))
+--     (liftA2 intersectEntities (getQueryEntities (Proxy @(QueryHeadContains as c)) (Proxy @c)) (getQueryEntities (Proxy @(QueryHeadContains as d)) (Proxy @d)))
+--   {-# INLINE getQueryHead #-}
+--   {-# INLINE getQueryEntities #-}
 
 -- See Data.Foldable
 (#.) :: Coercible b c => (b -> c) -> (a -> b) -> (a -> c)

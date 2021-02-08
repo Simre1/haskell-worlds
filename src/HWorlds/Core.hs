@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecursiveDo #-}
@@ -29,21 +31,39 @@ import Data.Proxy
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
-import qualified Data.IntSet as S
+-- import qualified Data.IntSet as S
 import Data.Maybe
 import Data.Bool
 import GHC.TypeLits
 import Control.Applicative
+import Data.Functor.Identity
+import Data.Foldable
+import qualified Data.IntMap.Strict as IM
 
 newtype Entity = Entity Int deriving (Eq, Show, Ord)
 
-newtype Entities = Entities S.IntSet deriving Show
+newtype Entities a = Entities (IM.IntMap a) deriving Show
 
-noEntities :: Entities
-noEntities = Entities S.empty
+intersectEntities :: (a -> b -> c) -> Entities a -> Entities b -> Entities c
+intersectEntities f (Entities m1) (Entities m2) = Entities $ IM.intersectionWith f m1 m2
 
-intersectEntities :: Entities -> Entities -> Entities
-intersectEntities (Entities e1) (Entities e2) = Entities $ S.intersection e1 e2
+-- Turned out be slower!
+-- data Entities a = Entities (S.SerialT Identity (Entity, a)) --(IM.IntMap a) deriving Show
+
+-- Entity Ids must be ordered highest to lowest!!!
+-- intersectEntities :: forall a b c. (a -> b -> c) -> Entities a -> Entities b -> Entities c
+-- intersectEntities f (Entities !es1) (Entities !es2) = Entities . runIdentity $ go es1 es2
+--   where 
+--     go :: S.SerialT Identity (Entity, a) -> S.SerialT Identity (Entity, b) -> Identity (S.SerialT Identity (Entity, c))
+--     go !s1 !s2 = do
+--       maybe1 <- S.uncons s1
+--       maybe2 <- S.uncons s2
+--       case (maybe1,maybe2) of
+--         (Just (!(e1,c1), rest1), Just (!(e2,c2), rest2)) -> if
+--           | e1 < e2 -> id $! go s1 (S.dropWhile (\(e,_)  -> e1<e) rest2)
+--           | e1 > e2 -> id $! go (S.dropWhile (\(e,_) -> e2<e) rest1) s2
+--           | otherwise -> S.cons (e1,f c1 c2) <$> go rest1 rest2 
+--         _ -> pure S.nil
 
 newtype World (a :: AppendList Op) = World WorldStorage
 
@@ -77,7 +97,7 @@ data Capability (c :: Op) where
   CapGet :: (Entity -> IO (Maybe a)) -> Capability (Get a)
   CapSet :: (Entity -> a -> IO ()) -> Capability (Set a)
   CapDestroy :: (Entity -> IO ()) -> Capability (Destroy a)
-  CapMember :: IO Entities -> Capability (Member a)
+  CapMember :: IO (Entities a) -> Capability (Member a)
 
 addCapability :: World as -> Capability a -> World (as :> a)
 addCapability (World v) component = World (storageAdd component v)
@@ -112,7 +132,7 @@ eDestroy :: forall a as m. (HasCapability as (Destroy a), MonadIO m) => Entity -
 eDestroy e _ = askWorld >>= \w -> case getCapability w :: Capability (Destroy a) of
   CapDestroy f -> liftIO $ f e
 
-eMember :: forall a as m. (HasCapability as (Member a), MonadIO m) => Proxy a -> WorldT as m Entities
+eMember :: forall a as m. (HasCapability as (Member a), MonadIO m) => Proxy a -> WorldT as m (Entities a)
 eMember _ = askWorld >>= \w -> case getCapability w :: Capability (Member a) of
   CapMember f -> liftIO f
 
@@ -127,16 +147,18 @@ entityWorld = do
 newEntity :: (HasCapability as (Get NewEntity), MonadIO m) => WorldT as m Entity
 newEntity = fromNewEntity . fromJust <$> eGet global
 
-initEntity :: (HasCapability as (Get NewEntity), MonadIO m, MultiSet as a) => a -> WorldT as m ()
+initEntity :: (HasCapability as (Get NewEntity), MonadIO m, MultiSet as a) => a -> WorldT as m Entity
 initEntity s = do
   e <- newEntity
   multiSet e s
+  pure e
 
 global :: Entity
 global = Entity (-1)
 
-eFoldMap :: Monoid m => Entities -> (Entity -> m) -> m
-eFoldMap (Entities set) f = S.foldl' (\a b -> a <> f (Entity b)) mempty set
+eFold :: (Monoid m) => Entities a -> ((Entity, a) -> m) -> m
+eFold (Entities es) f = IM.foldMapWithKey (\k a -> f (Entity k, a)) es 
+  -- runIdentity $ S.fold (S.foldMap f) es
 
 morphWorldT :: Monad g => (forall x. f x -> g x) -> WorldT as f a -> WorldT as g a
 morphWorldT f worldT = askWorld >>= \w -> lift (f (runWorldT w worldT))
@@ -151,7 +173,7 @@ multiSet = multiSet' (Proxy @(Settable as a))
 multiDestroy :: forall as a m. (MultiDestroy as a, MonadIO m) => Entity -> Proxy a -> WorldT as m ()
 multiDestroy = multiDestroy' (Proxy @(Destroyable as a))
 
-multiMember :: forall as a m. (MultiMember as a, MonadIO m) => Proxy a -> WorldT as m Entities
+multiMember :: forall as a m. (MultiMember as a, MonadIO m) => Proxy a -> WorldT as m (Entities a)
 multiMember = multiMember' (Proxy @(Memberable as a))
 
 class HasCapability (as :: AppendList Op) (a :: Op) where
@@ -342,7 +364,7 @@ instance (MultiDestroy caps a, MultiDestroy caps b, MultiDestroy caps c, MultiDe
     multiDestroy' (Proxy @(Destroyable caps f)) e (Proxy @f)
 
 class MultiMember' (b :: Bool) (caps :: AppendList Op) a where
-  multiMember' :: MonadIO m => Proxy b -> Proxy a -> WorldT caps m Entities
+  multiMember' :: MonadIO m => Proxy b -> Proxy a -> WorldT caps m (Entities a)
 
 type Memberable caps a = Contains caps (Member a)
 type MultiMember caps a = MultiMember' (Memberable caps a) caps a
@@ -351,7 +373,7 @@ instance HasCapability caps (Member a) => MultiMember' True caps a where
   multiMember' _ p = eMember p
 
 instance (MultiMember caps a, MultiMember caps b) => MultiMember' False caps (a,b) where
-  multiMember' _ _ = liftA2 intersectEntities
+  multiMember' _ _ = liftA2 (intersectEntities (,))
     (multiMember' (Proxy @(Memberable caps a)) (Proxy @a)) 
     (multiMember' (Proxy @(Memberable caps b)) (Proxy @b))
 
@@ -360,7 +382,7 @@ instance (MultiMember caps a, MultiMember caps b, MultiMember caps c) => MultiMe
     (multiMember' (Proxy @(Memberable caps a)) (Proxy @a)) 
     (multiMember' (Proxy @(Memberable caps b)) (Proxy @b))
     (multiMember' (Proxy @(Memberable caps c)) (Proxy @c))
-    where intersect3 a b c = intersectEntities a $ intersectEntities b c
+    where intersect3 a b c = intersectEntities (\a (b,c) -> (a,b,c)) a $ intersectEntities (,) b c
 
 instance (MultiMember caps a, MultiMember caps b, MultiMember caps c, MultiMember caps d) => MultiMember' False caps (a,b,c,d) where
   multiMember' _ _ = liftA4 intersect4
@@ -370,7 +392,7 @@ instance (MultiMember caps a, MultiMember caps b, MultiMember caps c, MultiMembe
     (multiMember' (Proxy @(Memberable caps d)) (Proxy @d))
     where 
       liftA4 f a b c d = f <$> a <*> b <*> c <*> d 
-      intersect4 a b c d = intersectEntities (intersectEntities a b) (intersectEntities c d)
+      intersect4 a b c d = intersectEntities (\(a,b) (c,d) -> (a,b,c,d)) (intersectEntities (,) a b) (intersectEntities (,) c d)
 
 instance (MultiMember caps a, MultiMember caps b, MultiMember caps c, MultiMember caps d, MultiMember caps e) => MultiMember' False caps (a,b,c,d,e) where
   multiMember' _ _ = liftA5 intersect5
@@ -381,7 +403,7 @@ instance (MultiMember caps a, MultiMember caps b, MultiMember caps c, MultiMembe
     (multiMember' (Proxy @(Memberable caps e)) (Proxy @e))
     where 
       liftA5 f a b c d e = f <$> a <*> b <*> c <*> d <*> e
-      intersect5 a b c d e = intersectEntities a (intersectEntities (intersectEntities b c) (intersectEntities d e))
+      intersect5 a b c d e = intersectEntities (\a (b,c,d,e) -> (a,b,c,d,e)) a (intersectEntities (\(a,b) (c,d) -> (a,b,c,d)) (intersectEntities (,) b c) (intersectEntities (,) d e))
 
 instance (MultiMember caps a, MultiMember caps b, MultiMember caps c, MultiMember caps d, MultiMember caps e, MultiMember caps f) => MultiMember' False caps (a,b,c,d,e,f) where
   multiMember' _ _ = liftA6 intersect6
@@ -393,4 +415,4 @@ instance (MultiMember caps a, MultiMember caps b, MultiMember caps c, MultiMembe
     (multiMember' (Proxy @(Memberable caps f)) (Proxy @f))
     where 
       liftA6 f a b c d e f' = f <$> a <*> b <*> c <*> d <*> e <*> f'
-      intersect6 a b c d e f = intersectEntities a b `intersectEntities` intersectEntities c d `intersectEntities` intersectEntities e f
+      intersect6 a b c d e f = intersectEntities (\(a,b,c,d) (e,f) -> (a,b,c,d,e,f)) (intersectEntities (\(a,b) (c,d) -> (a,b,c,d)) (intersectEntities (,) a b) (intersectEntities (,) c d)) (intersectEntities (,) e f)

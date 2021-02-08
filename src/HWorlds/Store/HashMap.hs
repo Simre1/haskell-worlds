@@ -4,14 +4,18 @@
 module HWorlds.Store.HashMap where
 
 import HWorlds.Core
-import qualified Data.IntMap as M
-import Data.IORef ( modifyIORef, newIORef, readIORef )
+import qualified Data.HashTable.IO as H
+import qualified Data.IntMap as IM
 
-mapWorld :: forall a. IO (World (Init :> Get a :> Set a :> Destroy a :> Member a))
-mapWorld = do
-  ref <- newIORef M.empty
+hashWorld :: forall a. IO (World (Init :> Get a :> Set a :> Destroy a :> Member a))
+hashWorld = do
+  ref <- H.new :: IO (H.LinearHashTable Int a)
   pure $ emptyWorld 
-    `addCapability` CapGet (\(Entity i) -> M.lookup i <$> readIORef ref)
-    `addCapability` CapSet (\(Entity i) a -> modifyIORef ref (M.insert i a))
-    `addCapability` CapDestroy (\(Entity i) -> modifyIORef ref (M.delete i))
-    `addCapability` CapMember (Entities . M.keysSet <$> readIORef ref)
+    `addCapability` CapGet (\(Entity i) -> H.lookup ref i)
+    `addCapability` CapSet (\(Entity i) a -> H.insert ref i a)
+    `addCapability` CapDestroy (\(Entity i) -> H.delete ref i)
+    -- `addCapability` CapMember (Entities <$> hashtableToStream ref)
+    `addCapability` CapMember (Entities <$> H.foldM (\s (eId, a) -> pure $ IM.insert eId a s) IM.empty ref)
+
+-- hashtableToStream :: H.LinearHashTable Int a -> IO (S.SerialT m (Entity, a))
+-- hashtableToStream = H.foldM (\s (eId, a) -> pure $! S.cons (Entity eId, a) s) S.nil

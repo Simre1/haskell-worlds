@@ -2,8 +2,6 @@
 
 Haskell Worlds is an *Entity Component System* (ECS) implemented in Haskell. Design choices have been heavily influenced by *apecs*, but I have tried to create an even more ergonomic interface. The most interesting feature is that you can immediately add new components without any boilerplate. It is also possible to dynamically add more components to a world as the application runs.
 
-Keep in mind that *Haskell Worlds* is still very rough around the edges and does miss some important features.
-
 Here's an example:
 ```haskell
 {-# LANGUAGE TypeApplications #-}
